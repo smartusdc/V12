@@ -891,7 +891,7 @@ async function updateUI() {
             showLoading(true);
             showDebugInfo('Attempting to claim deposit rewards');
             
-            const tx = await contract.methods.claimDepositReward()
+const tx = await contract.methods.claimReward()  // 正
                 .send({ 
                     from: userAddress,
                     gasPrice: await web3.eth.getGasPrice()
