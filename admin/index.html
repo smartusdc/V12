@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EarnUSDC Admin Panel</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/4.4.0/web3.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container { 
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section {
+            margin-bottom: 20px;
+            padding: 20px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        h1, h2 { color: #333; }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .info-block {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        input {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        button:hover:not(:disabled) { background: #45a049; }
+        button:disabled { background: #cccccc; }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            background: #4CAF50;
+            color: white;
+            display: none;
+        }
+        .error { background: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>EarnUSDC Admin Panel</h1>
+        
+        <div id="notification" class="notification"></div>
+
+        <div class="section">
+            <button id="connectWallet">Connect Wallet</button>
+            <div id="walletStatus"></div>
+        </div>
+
+        <div class="section">
+            <h2>残高・設定情報</h2>
+            <button id="refreshBalance">更新</button>
+            <div id="balanceSummary" class="info-grid"></div>
+        </div>
+
+        <div class="section">
+            <h2>APR設定</h2>
+            <input type="number" id="newApr" placeholder="例: 7400 (74%)">
+            <button id="setAprButton">APR変更</button>
+        </div>
+
+        <div class="section">
+            <h2>リファラル報酬率設定</h2>
+            <input type="number" id="referrerRate" placeholder="例: 500 (5%)">
+            <input type="number" id="referredRate" placeholder="例: 7000 (70%)">
+            <button id="setReferralButton">報酬率変更</button>
+        </div>
+
+        <div class="section">
+            <h2>緊急引き出し</h2>
+            <input type="number" id="withdrawAmount" placeholder="USDC Amount" step="0.000001">
+            <button id="withdrawButton">引き出し実行</button>
+        </div>
+    </div>
+
+    <script>
+        const BASE_CHAIN_ID = '0x2105';
+        const CONTRACT_ADDRESS = '0x your_contract_address_here';
+        const GAS_SETTINGS = {
+            BASE_GAS_PRICE: '0.0001',
+            FUNCTION_GAS_LIMITS: {
+                setAPR: 100000,
+                setReferralRates: 120000,
+                emergencyWithdraw: 150000
+            }
+        };
+
+        const CONTRACT_ABI = [
+            {"inputs":[],"name":"getBalanceSummary","outputs":[{"internalType":"uint256","name":"contractBalance","type":"uint256"},{"internalType":"uint256","name":"totalDepositAmount","type":"uint256"},{"internalType":"uint256","name":"totalRewardAmount","type":"uint256"},{"internalType":"uint256","name":"totalReferralAmount","type":"uint256"}],"stateMutability":"view","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"_newAPR","type":"uint256"}],"name":"setAPR","outputs":[],"stateMutability":"nonpayable","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"_referrerRate","type":"uint256"},{"internalType":"uint256","name":"_referredRate","type":"uint256"}],"name":"setReferralRewardRates","outputs":[],"stateMutability":"nonpayable","type":"function"},
+            {"inputs":[{"internalType":"uint256","name":"amount","type":"uint256"}],"name":"emergencyWithdraw","outputs":[],"stateMutability":"nonpayable","type":"function"},
+            {"inputs":[],"name":"currentAPR","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+            {"inputs":[],"name":"referrerRewardRate","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+            {"inputs":[],"name":"referredRewardRate","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}
+        ];
+
+        let web3;
+        let contract;
+        let currentAccount;
+        let isProcessing = false;
+
+        function showMessage(message, isError = false) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.className = `notification${isError ? ' error' : ''}`;
+            notification.style.display = 'block';
+            setTimeout(() => notification.style.display = 'none', 3000);
+        }
+
+        function toUSDCAmount(amount) {
+            const [whole, fraction = ''] = amount.toString().split('.');
+            const paddedFraction = fraction.padEnd(6, '0').slice(0, 6);
+            return web3.utils.toBN(`${whole}${paddedFraction}`).toString();
+        }
+
+        function fromUSDCAmount(amount) {
+            const value = web3.utils.toBN(amount);
+            const divisor = web3.utils.toBN(10 ** 6);
+            const whole = value.div(divisor);
+            const fraction = value.mod(divisor).toString().padStart(6, '0');
+            return `${whole}.${fraction}`;
+        }
+
+        async function getGasSettings(functionName) {
+            const gasPrice = web3.utils.toBN(await web3.eth.getGasPrice());
+            const baseGasPrice = web3.utils.toBN(web3.utils.toWei(GAS_SETTINGS.BASE_GAS_PRICE, 'gwei'));
+            return {
+                gasLimit: GAS_SETTINGS.FUNCTION_GAS_LIMITS[functionName],
+                gasPrice: gasPrice.lt(baseGasPrice) ? gasPrice : baseGasPrice
+            };
+        }
+
+        async function connectWallet() {
+            try {
+                if (typeof window.ethereum === 'undefined') {
+                    throw new Error('MetaMaskをインストールしてください');
+                }
+
+                const chainId = await window.ethereum.request({ method: 'eth_chainId' });
+                if (chainId.toLowerCase() !== BASE_CHAIN_ID.toLowerCase()) {
+                    throw new Error('BASEネットワークに接続してください');
+                }
+
+                web3 = new Web3(window.ethereum);
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                currentAccount = accounts[0];
+                contract = new web3.eth.Contract(CONTRACT_ABI, CONTRACT_ADDRESS);
+
+                document.getElementById('walletStatus').textContent = 
+                    `Connected: ${currentAccount.substring(0, 6)}...${currentAccount.substring(38)}`;
+                
+                document.querySelectorAll('button').forEach(btn => {
+                    if (btn.id !== 'connectWallet') btn.disabled = false;
+                });
+
+                await getBalanceSummary();
+
+            } catch (error) {
+                showMessage(error.message, true);
+            }
+        }
+
+        async function sendTransaction(method, params, functionName, successMessage) {
+            if (!contract || isProcessing) return;
+            
+            const button = document.getElementById({
+                'setAPR': 'setAprButton',
+                'setReferralRates': 'setReferralButton',
+                'emergencyWithdraw': 'withdrawButton'
+            }[functionName]);
+            if (button) button.disabled = true;
+
+            try {
+                isProcessing = true;
+                const gasSettings = await getGasSettings(functionName);
+                
+                const tx = await method(...params).send({
+                    from: currentAccount,
+                    gas: gasSettings.gasLimit,
+                    gasPrice: gasSettings.gasPrice
+                });
+
+                if (tx.status) {
+                    showMessage(successMessage);
+                    await getBalanceSummary();
+                }
+            } catch (error) {
+                showMessage(error.message, true);
+            } finally {
+                isProcessing = false;
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function getBalanceSummary() {
+            try {
+                const summary = await contract.methods.getBalanceSummary().call();
+                const currentApr = await contract.methods.currentAPR().call();
+                const referrerRate = await contract.methods.referrerRewardRate().call();
+                const referredRate = await contract.methods.referredRewardRate().call();
+
+                document.getElementById('balanceSummary').innerHTML = `
+                    <div class="info-block">
+                        <h3>残高情報</h3>
+                        <p>コントラクト残高: ${fromUSDCAmount(summary[0])} USDC</p>
+                        <p>総預入額: ${fromUSDCAmount(summary[1])} USDC</p>
+                        <p>総報酬支払額: ${fromUSDCAmount(summary[2])} USDC</p>
+                        <p>総リファラル報酬額: ${fromUSDCAmount(summary[3])} USDC</p>
+                        <p>現在のAPR: ${(currentApr/100).toFixed(2)}%</p>
+                        <p>紹介者報酬率: ${(referrerRate/100).toFixed(2)}%</p>
+                        <p>被紹介者報酬率: ${(referredRate/100).toFixed(2)}%</p>
+                    </div>
+                `;
+            } catch (error) {
+                showMessage(error.message, true);
+            }
+        }
+
+        async function setAPR() {
+            try {
+                const newApr = document.getElementById('newApr').value;
+                if (!newApr) throw new Error('APRを入力してください');
+
+                await sendTransaction(
+                    contract.methods.setAPR,
+                    [newApr],
+                    'setAPR',
+                    'APRを更新しました'
+                );
+
+                document.getElementById('newApr').value = '';
+            } catch (error) {
+                showMessage(error.message, true);
+            }
+        }
+
+        async function setReferralRates() {
+            try {
+                const referrerRate = document.getElementById('referrerRate').value;
+                const referredRate = document.getElementById('referredRate').value;
+                
+                if (!referrerRate || !referredRate) {
+                    throw new Error('報酬率を入力してください');
+                }
+
+                await sendTransaction(
+                    contract.methods.setReferralRewardRates,
+                    [referrerRate, referredRate],
+                    'setReferralRates',
+                    'リファラル報酬率を更新しました'
+                );
+
+                document.getElementById('referrerRate').value = '';
+                document.getElementById('referredRate').value = '';
+            } catch (error) {
+                showMessage(error.message, true);
+            }
+        }
+
+        async function emergencyWithdraw() {
+            try {
+                const amount = document.getElementById('withdrawAmount').value;
+                if (!amount) throw new Error('金額を入力してください');
+
+                const amountInUSDC = toUSDCAmount(amount);
+                await sendTransaction(
+                    contract.methods.emergencyWithdraw,
+                    [amountInUSDC],
+                    'emergencyWithdraw',
+                    `${amount} USDCを引き出しました`
+                );
+
+                document.getElementById('withdrawAmount').value = '';
+            } catch (error) {
+                showMessage(error.message, true);
+            }
+        }
+
+        window.ethereum?.on('accountsChanged', connectWallet);
+        window.ethereum?.on('chainChanged', connectWallet);
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.ethereum) connectWallet();
+            document.getElementById('connectWallet').addEventListener('click', connectWallet);
+            document.getElementById('refreshBalance').addEventListener('click', getBalanceSummary);
+            document.getElementById('setAprButton').addEventListener('click', setAPR);
+            document.getElementById('setReferralButton').addEventListener('click', setReferralRates);
+            document.getElementById('withdrawButton').addEventListener('click', emergencyWithdraw);
+
+            document.querySelectorAll('button').forEach(btn => {
+                if (btn.id !== 'connectWallet') btn.disabled = true;
+            });
+        });
+    </script>
+</body>
+</html>
