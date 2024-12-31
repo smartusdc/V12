@@ -764,10 +764,10 @@ async function updateUI() {
         document.getElementById('stakedAmount').textContent = 
             formatNumber(web3.utils.fromWei(userInfo[0], 'mwei'));
         
-        // Pending Rewards の計算を調整
-        const adjustedRewards = web3.utils.toBN(userInfo[1]).div(web3.utils.toBN('1000000')).div(web3.utils.toBN('1000'));
+        // Pending Rewards の計算を調整（USDCの小数点6桁のみを考慮）
         document.getElementById('pendingRewards').textContent = 
-            formatNumber(adjustedRewards.toString());
+            formatNumber(web3.utils.fromWei(userInfo[1], 'mwei'));
+
     } catch (error) {
         console.error('Error updating UI:', error);
         showAlert('Failed to update information', 'error');
