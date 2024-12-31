@@ -767,7 +767,7 @@ async function updateUI() {
         // Pending Rewards の計算を調整（1000で割る）
         const adjustedRewards = web3.utils.toBN(userInfo[1]).div(web3.utils.toBN('1000'));
         document.getElementById('pendingRewards').textContent = 
-            formatNumber(web3.utils.fromWei(adjustedRewards, 'mwei'));
+          formatNumber(userInfo[1] / 1_000_000);  // USDCの精度のみを考慮
     } catch (error) {
         console.error('Error updating UI:', error);
         showAlert('Failed to update information', 'error');
