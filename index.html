@@ -750,6 +750,7 @@ async function updateUI() {
         try {
             userInfo = await contract.methods.getUserInfo(userAddress).call();
             showDebugInfo('User info retrieved successfully');
+            showDebugInfo('Raw pending rewards: ' + userInfo[1]);
         } catch (error) {
             showDebugInfo('Error in getUserInfo: ' + error.message);
             userInfo = [0, 0, 0, 0, false];
@@ -763,11 +764,10 @@ async function updateUI() {
         document.getElementById('stakedAmount').textContent = 
             formatNumber(web3.utils.fromWei(userInfo[0], 'mwei'));
         
-        // Pending Rewards の計算を調整
-        const adjustedRewards = web3.utils.toBN(userInfo[1]).div(web3.utils.toBN('300'));
+        // Pending Rewards の計算を調整（1000で割る）
+        const adjustedRewards = web3.utils.toBN(userInfo[1]).div(web3.utils.toBN('1000'));
         document.getElementById('pendingRewards').textContent = 
             formatNumber(web3.utils.fromWei(adjustedRewards, 'mwei'));
-
     } catch (error) {
         console.error('Error updating UI:', error);
         showAlert('Failed to update information', 'error');
