@@ -935,28 +935,53 @@ function formatNumber(number, decimals = 6) {
     }
 
     async function claimRewards() {
-        if (!userAddress) return;
+    if (!userAddress) return;
+    
+    try {
+        showLoading(true);
         
-        try {
-            showLoading(true);
-            showDebugInfo('Attempting to claim deposit rewards');
+        // 事前に報酬額を確認
+        const pendingRewards = await contract.methods.calculateReward(userAddress).call();
+        showDebugInfo('Pending rewards amount: ' + web3.utils.fromWei(pendingRewards, 'mwei') + ' USDC');
+        
+        // ガス見積もり試行
+        const gasEstimate = await contract.methods.claimDepositReward().estimateGas({
+            from: userAddress
+        }).catch(error => {
+            showDebugInfo('Gas estimation failed: ' + error.message);
+            throw error;
+        });
+        
+        showDebugInfo('Estimated gas: ' + gasEstimate);
+        
+        // トランザクション実行
+        const tx = await contract.methods.claimDepositReward()
+            .send({ 
+                from: userAddress,
+                gas: Math.floor(gasEstimate * 1.2), // 20%のバッファを追加
+                gasPrice: await web3.eth.getGasPrice()
+            });
             
-            const tx = await contract.methods.claimDepositReward()
-                .send({ 
-                    from: userAddress,
-                    gasPrice: await web3.eth.getGasPrice()
-                });
-            showAlert('Rewards claimed successfully', 'success');
-            showDebugInfo('Claim rewards transaction: ' + tx.transactionHash);
-            updateUI();
-        } catch (error) {
-            console.error('Claim error:', error);
-            showAlert('Failed to claim rewards: ' + error.message, 'error');
-            showDebugInfo('Claim rewards error: ' + error.message);
-        } finally {
-            showLoading(false);
+        showAlert('Rewards claimed successfully', 'success');
+        showDebugInfo('Claim rewards transaction: ' + tx.transactionHash);
+        updateUI();
+    } catch (error) {
+        console.error('Claim error:', error);
+        let errorMessage = error.message;
+        
+        // エラーメッセージの詳細化
+        if (error.message.includes('gas required exceeds allowance')) {
+            errorMessage = 'Insufficient gas: The transaction requires more gas than expected';
+        } else if (error.message.includes('execution reverted')) {
+            errorMessage = 'Transaction reverted: You may not have any rewards to claim';
         }
+        
+        showAlert('Failed to claim rewards: ' + errorMessage, 'error');
+        showDebugInfo('Claim rewards error: ' + errorMessage);
+    } finally {
+        showLoading(false);
     }
+}
 
     async function generateReferralCode() {
         if (!userAddress) {
