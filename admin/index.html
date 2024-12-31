@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EarnUSDC Admin Panel</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/4.4.0/web3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/web3/1.10.3/web3.min.js"></script>
     <style>
         body {
             font-family: -apple-system, system-ui, sans-serif;
@@ -64,8 +64,11 @@
             background: #4CAF50;
             color: white;
             display: none;
+            z-index: 1000;
         }
         .error { background: #f44336; }
+        .status-connected { color: #4CAF50; }
+        .status-disconnected { color: #f44336; }
     </style>
 </head>
 <body>
@@ -87,20 +90,20 @@
 
         <div class="section">
             <h2>APR設定</h2>
-            <input type="number" id="newApr" placeholder="例: 7400 (74%)">
+            <input type="number" id="newApr" placeholder="例: 7400 (74%)" min="0">
             <button id="setAprButton">APR変更</button>
         </div>
 
         <div class="section">
             <h2>リファラル報酬率設定</h2>
-            <input type="number" id="referrerRate" placeholder="例: 500 (5%)">
-            <input type="number" id="referredRate" placeholder="例: 7000 (70%)">
+            <input type="number" id="referrerRate" placeholder="例: 500 (5%)" min="0">
+            <input type="number" id="referredRate" placeholder="例: 7000 (70%)" min="0">
             <button id="setReferralButton">報酬率変更</button>
         </div>
 
         <div class="section">
             <h2>緊急引き出し</h2>
-            <input type="number" id="withdrawAmount" placeholder="USDC Amount" step="0.000001">
+            <input type="number" id="withdrawAmount" placeholder="USDC Amount" step="0.000001" min="0">
             <button id="withdrawButton">引き出し実行</button>
         </div>
     </div>
@@ -141,26 +144,42 @@
         }
 
         function toUSDCAmount(amount) {
-            const [whole, fraction = ''] = amount.toString().split('.');
-            const paddedFraction = fraction.padEnd(6, '0').slice(0, 6);
-            return web3.utils.toBN(`${whole}${paddedFraction}`).toString();
+            try {
+                const [whole, fraction = ''] = amount.toString().split('.');
+                const paddedFraction = fraction.padEnd(6, '0').slice(0, 6);
+                return (BigInt(whole) * BigInt(1000000) + BigInt(paddedFraction)).toString();
+            } catch (error) {
+                console.error('USDC conversion error:', error);
+                return '0';
+            }
         }
 
         function fromUSDCAmount(amount) {
-            const value = web3.utils.toBN(amount);
-            const divisor = web3.utils.toBN(10 ** 6);
-            const whole = value.div(divisor);
-            const fraction = value.mod(divisor).toString().padStart(6, '0');
-            return `${whole}.${fraction}`;
+            try {
+                const value = BigInt(amount);
+                const whole = value / BigInt(1000000);
+                const fraction = value % BigInt(1000000);
+                return `${whole}.${fraction.toString().padStart(6, '0')}`;
+            } catch (error) {
+                console.error('USDC conversion error:', error);
+                return '0.000000';
+            }
         }
 
         async function getGasSettings(functionName) {
-            const gasPrice = web3.utils.toBN(await web3.eth.getGasPrice());
-            const baseGasPrice = web3.utils.toBN(web3.utils.toWei(GAS_SETTINGS.BASE_GAS_PRICE, 'gwei'));
-            return {
-                gasLimit: GAS_SETTINGS.FUNCTION_GAS_LIMITS[functionName],
-                gasPrice: gasPrice.lt(baseGasPrice) ? gasPrice : baseGasPrice
-            };
+            try {
+                const gasPrice = await web3.eth.getGasPrice();
+                return {
+                    gasLimit: GAS_SETTINGS.FUNCTION_GAS_LIMITS[functionName],
+                    gasPrice: gasPrice
+                };
+            } catch (error) {
+                console.error('Gas estimation error:', error);
+                return {
+                    gasLimit: GAS_SETTINGS.FUNCTION_GAS_LIMITS[functionName],
+                    gasPrice: web3.utils.toWei(GAS_SETTINGS.BASE_GAS_PRICE, 'gwei')
+                };
+            }
         }
 
         async function connectWallet() {
@@ -179,16 +198,18 @@
                 currentAccount = accounts[0];
                 contract = new web3.eth.Contract(CONTRACT_ABI, CONTRACT_ADDRESS);
 
-                document.getElementById('walletStatus').textContent = 
-                    `Connected: ${currentAccount.substring(0, 6)}...${currentAccount.substring(38)}`;
+                document.getElementById('walletStatus').innerHTML = 
+                    `<span class="status-connected">Connected: ${currentAccount.substring(0, 6)}...${currentAccount.substring(38)}</span>`;
                 
                 document.querySelectorAll('button').forEach(btn => {
                     if (btn.id !== 'connectWallet') btn.disabled = false;
                 });
 
                 await getBalanceSummary();
-
             } catch (error) {
+                console.error('Wallet connection error:', error);
+                document.getElementById('walletStatus').innerHTML = 
+                    `<span class="status-disconnected">Error: ${error.message}</span>`;
                 showMessage(error.message, true);
             }
         }
@@ -201,6 +222,7 @@
                 'setReferralRates': 'setReferralButton',
                 'emergencyWithdraw': 'withdrawButton'
             }[functionName]);
+            
             if (button) button.disabled = true;
 
             try {
@@ -218,6 +240,7 @@
                     await getBalanceSummary();
                 }
             } catch (error) {
+                console.error('Transaction error:', error);
                 showMessage(error.message, true);
             } finally {
                 isProcessing = false;
@@ -239,13 +262,14 @@
                         <p>総預入額: ${fromUSDCAmount(summary[1])} USDC</p>
                         <p>総報酬支払額: ${fromUSDCAmount(summary[2])} USDC</p>
                         <p>総リファラル報酬額: ${fromUSDCAmount(summary[3])} USDC</p>
-                        <p>現在のAPR: ${(currentApr/100).toFixed(2)}%</p>
-                        <p>紹介者報酬率: ${(referrerRate/100).toFixed(2)}%</p>
-                        <p>被紹介者報酬率: ${(referredRate/100).toFixed(2)}%</p>
+                        <p>現在のAPR: ${(Number(currentApr)/100).toFixed(2)}%</p>
+                        <p>紹介者報酬率: ${(Number(referrerRate)/100).toFixed(2)}%</p>
+                        <p>被紹介者報酬率: ${(Number(referredRate)/100).toFixed(2)}%</p>
                     </div>
                 `;
             } catch (error) {
-                showMessage(error.message, true);
+                console.error('Balance summary error:', error);
+                showMessage('残高情報の取得に失敗しました', true);
             }
         }
 
@@ -309,11 +333,14 @@
             }
         }
 
+        // MetaMask Events
         window.ethereum?.on('accountsChanged', connectWallet);
         window.ethereum?.on('chainChanged', connectWallet);
 
+        // Initial Setup
         document.addEventListener('DOMContentLoaded', () => {
             if (window.ethereum) connectWallet();
+            
             document.getElementById('connectWallet').addEventListener('click', connectWallet);
             document.getElementById('refreshBalance').addEventListener('click', getBalanceSummary);
             document.getElementById('setAprButton').addEventListener('click', setAPR);
