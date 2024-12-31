@@ -740,79 +740,32 @@ function formatNumber(number, decimals = 6) {
         updateUI();
     }
 
-  async function updateUI() {
+async function updateUI() {
     if (!userAddress) return;
     
     try {
         showLoading(true);
         
-        // ブロック情報の取得
-        const currentBlock = await web3.eth.getBlock('latest');
-        showDebugInfo('=== Contract State ===');
-        showDebugInfo(`Current Block Number: ${currentBlock.number}`);
-        showDebugInfo(`Block Timestamp: ${currentBlock.timestamp}`);
-        
-        // ユーザー情報の取得
-        const userInfo = await contract.methods.getUserInfo(userAddress).call();
-        const balance = await usdcContract.methods.balanceOf(userAddress).call();
-        
-        showDebugInfo('\n=== User Info ===');
-        showDebugInfo(`Deposit Amount: ${userInfo[0]}`); // depositAmount
-        showDebugInfo(`Pending Rewards: ${userInfo[1]}`); // pendingRewards
-        
-        if (userInfo[0] > 0) {  // depositAmount > 0
-    const apr = await contract.methods.currentAPR().call();
-    
-    showDebugInfo('\n=== Contract Parameters ===');
-    showDebugInfo(`APR: ${apr/100}%`);
-    showDebugInfo(`APR (raw): ${apr}`);
-    showDebugInfo(`Reward Interval: 5 minutes`);
-    
-    // 5分間隔での報酬計算
-    const intervalInSeconds = web3.utils.toBN(5 * 60); // 5 minutes
-    const depositAmount = web3.utils.toBN(userInfo[0]);
-    const aprBN = web3.utils.toBN(apr);
-    
-    const expectedIntervalReward = depositAmount
-        .mul(aprBN)
-        .div(web3.utils.toBN(10000))
-        .mul(intervalInSeconds)
-        .div(web3.utils.toBN(365 * 24 * 60 * 60));
-        
-    showDebugInfo('\n=== Reward Calculation ===');
-    showDebugInfo(`5-Minute Rate: ${apr/10000*(5*60)/(365*24*60*60)}%`);
-    showDebugInfo(`Expected 5-Minute Reward: ${web3.utils.fromWei(expectedIntervalReward, 'mwei')} USDC`);
-    showDebugInfo(`Expected 5-Minute Reward (raw): ${expectedIntervalReward.toString()}`);
-}
+        // ユーザー情報の取得を個別のtry-catchで囲む
+        let userInfo;
+        try {
+            userInfo = await contract.methods.getUserInfo(userAddress).call();
+            showDebugInfo('User info retrieved successfully');
+        } catch (error) {
+            showDebugInfo('Error in getUserInfo: ' + error.message);
+            // 一時的な対処として空の配列を設定
+            userInfo = [0, 0, 0, 0, false];
+        }
 
-        // UI更新（変更なし）
+        const balance = await usdcContract.methods.balanceOf(userAddress).call();
+
+        // UI更新（エラーに関係なく続行）
         document.getElementById('userBalance').textContent = 
             formatNumber(web3.utils.fromWei(balance, 'mwei'));
         document.getElementById('stakedAmount').textContent = 
             formatNumber(web3.utils.fromWei(userInfo[0], 'mwei'));
         document.getElementById('pendingRewards').textContent = 
             formatNumber(web3.utils.fromWei(userInfo[1], 'mwei'));
-
-        // リファラル情報の更新（変更なし）
-        const [referralCode, referrer] = await Promise.all([
-            contract.methods.userToReferralCode(userAddress).call(),
-            contract.methods.userToReferrer(userAddress).call()
-        ]);
-
-        const referralInput = document.getElementById('referralCode');
-        const referralStatus = document.getElementById('referralStatus');
-
-        if (referrer !== '0x0000000000000000000000000000000000000000') {
-            referralInput.style.display = 'none';
-            referralStatus.textContent = '✓ Referral Applied';
-            referralStatus.classList.add('active');
-        } else {
-            referralInput.style.display = 'block';
-            referralStatus.textContent = '';
-            referralStatus.classList.remove('active');
-        }
-
-        await checkAllowance();
 
     } catch (error) {
         console.error('Error updating UI:', error);
