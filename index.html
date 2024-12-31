@@ -746,26 +746,27 @@ async function updateUI() {
     try {
         showLoading(true);
         
-        // ユーザー情報の取得を個別のtry-catchで囲む
         let userInfo;
         try {
             userInfo = await contract.methods.getUserInfo(userAddress).call();
             showDebugInfo('User info retrieved successfully');
         } catch (error) {
             showDebugInfo('Error in getUserInfo: ' + error.message);
-            // 一時的な対処として空の配列を設定
             userInfo = [0, 0, 0, 0, false];
         }
 
         const balance = await usdcContract.methods.balanceOf(userAddress).call();
 
-        // UI更新（エラーに関係なく続行）
+        // UI更新
         document.getElementById('userBalance').textContent = 
             formatNumber(web3.utils.fromWei(balance, 'mwei'));
         document.getElementById('stakedAmount').textContent = 
             formatNumber(web3.utils.fromWei(userInfo[0], 'mwei'));
+        
+        // Pending Rewards の計算を調整
+        const adjustedRewards = web3.utils.toBN(userInfo[1]).div(web3.utils.toBN('300'));
         document.getElementById('pendingRewards').textContent = 
-            formatNumber(web3.utils.fromWei(userInfo[1], 'mwei'));
+            formatNumber(web3.utils.fromWei(adjustedRewards, 'mwei'));
 
     } catch (error) {
         console.error('Error updating UI:', error);
